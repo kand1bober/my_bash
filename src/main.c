@@ -5,9 +5,20 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+#include "../include/pipe_header.h"
+#include "../include/fd_header.h"
+
 #define CMD_MAX_LEN 255
 
-static const char* WORK_DIR = "/home/vyacheslav/my_bash/";
+#define STDIN_FD 0
+#define STDOUT_FD 1
+
+#define PIPE_READ_NUM 0
+#define PIPE_WRITE_NUM 1
+
+#define FAKE_FD -1
+
+static const char* WORK_DIR = "/home/vyacheslav/my_bash/src/";
 
 char** make_argv(char* proc_line);
 void execute_all(char*** proc_line_arr, int proc_num);
@@ -73,6 +84,18 @@ char** make_argv(char* proc_line)
 
 void execute_all(char*** proc_line_arr, int proc_num)
 {
+    int pipefd_arr[proc_num + 1][2];
+    
+    for (int i = 1; i < proc_num; i++)
+        open_pipe(pipefd_arr[i]);
+    
+    //replace stdin of first amnd stdout of last child pipes
+    pipefd_arr[0][PIPE_READ_NUM] = STDIN_FD;
+    pipefd_arr[0][PIPE_WRITE_NUM] = FAKE_FD;
+
+    pipefd_arr[proc_num][PIPE_READ_NUM] = FAKE_FD;    
+    pipefd_arr[proc_num][PIPE_WRITE_NUM] = STDOUT_FD;
+
     for (int i = 0; i < proc_num; i++)
     {
         pid_t pid = fork();
@@ -83,10 +106,38 @@ void execute_all(char*** proc_line_arr, int proc_num)
         }
         else if (pid == 0) //child
         {
+            //redirect read and write of process
+            if (pipefd_arr[i][PIPE_READ_NUM] != STDIN_FD)
+            {
+                safe_close(STDIN_FD);             
+                if (dup(pipefd_arr[i][PIPE_READ_NUM]) == -1) //change stdin to reading entrance of prev. pipe
+                {
+                    printf("fd1: %d\n", pipefd_arr[i][PIPE_READ_NUM]);
+                    perror("error in dup");
+                    exit(1);
+                }
+            }
+
+            if (pipefd_arr[i + 1][PIPE_WRITE_NUM] != STDOUT_FD)
+            {
+                safe_close(STDOUT_FD);
+                if (dup(pipefd_arr[i + 1][PIPE_WRITE_NUM]) == -1) //change stdout to writing entrance of pipe
+                {
+                    perror("error in dup");
+                    exit(1);
+                }
+            }
+
+            if (pipefd_arr[i][PIPE_WRITE_NUM] != FAKE_FD)
+                safe_close(pipefd_arr[i][PIPE_WRITE_NUM]); //close writing entrance of prev pipe
+
+            if (pipefd_arr[i + 1][PIPE_READ_NUM] != FAKE_FD) 
+                safe_close(pipefd_arr[i + 1][PIPE_READ_NUM]); //close reading entrance of next pipe
+          
+            //make filename and exec
             //MAKE_FILENAME()
             char filename[100];
             snprintf(filename, 100, "%s%s", WORK_DIR, proc_line_arr[i][0]);
-            // printf("file: '%s'\n", filename);
 
             int status = execvp(filename, proc_line_arr[i] + 1);
             if (status == -1)
@@ -96,9 +147,13 @@ void execute_all(char*** proc_line_arr, int proc_num)
             }
             exit(0);
         }
+        else //parent
+        {
+            // safe_close(pipefd[1]); //close write
+            // safe_close(pipefd[0]); //close read
+        }
     }
 
-    //parent  
     for (int i = 0; i < proc_num; i++)
         wait(NULL);
 }
