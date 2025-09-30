@@ -148,12 +148,15 @@ void execute_all(char*** proc_line_arr, int proc_num)
             exit(0);
         }
         else //parent
-        {
-            // safe_close(pipefd[1]); //close write
-            // safe_close(pipefd[0]); //close read
-        }
+        {}
     }
 
     for (int i = 0; i < proc_num; i++)
         wait(NULL);
+     
+    for (int i = 1; i < proc_num; i++)
+    {   
+        safe_close(pipefd_arr[i][0]);
+        safe_close(pipefd_arr[i][1]);
+    }
 }
